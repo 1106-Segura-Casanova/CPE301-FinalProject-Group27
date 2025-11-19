@@ -1,0 +1,82 @@
+Names: Casanova Segura, Joey Lewis, Nathan Coffman
+
+#DEFINE TRUE 1
+#DEFINE FALSE 0
+
+// UART Pointers
+volatile unsigned char *myUCSR0A  = (unsigned char *)0xC0;
+volatile unsigned char *myUCSR0B  = (unsigned char *)0xC1;
+volatile unsigned char *myUCSR0C  = (unsigned char *)0xC2;
+volatile unsigned int  *myUBRR0   = (unsigned int  *)0xC4;
+volatile unsigned char *myUDR0    = (unsigned char *)0xC6;
+// GPIO Pointers
+volatile unsigned char *myPortB   = (unsigned char *)0x25;
+volatile unsigned char *myDDRB    = (unsigned char *)0x24;
+// Timer Pointers
+volatile unsigned char *myTCCR1A  = (unsigned char *)0x80;
+volatile unsigned char *myTCCR1B  = (unsigned char *)0x81;
+volatile unsigned char *myTCCR1C  = (unsigned char *)0x82;
+volatile unsigned char *myTIMSK1  = (unsigned char *)0x6F;
+volatile unsigned char *myTIFR1   = (unsigned char *)0x16;
+volatile unsigned int  *myTCNT1   = (unsigned int  *)0x85;
+// Interrupt Pointers
+volatile unsigned char *myEICRB   = (unsigned char *)0x69;
+volatile unsigned char *myEIMSK   = (unsigned char *)0x3D;
+volatile unsigned char *mySREG    = (unsigned char *)0x5F;
+// LED Pointers
+volatile unsigned char *myDDRH    = (unsigned char *)0x101;
+volatile unsigned char *myPortH   = (unsigned char *)0x102;
+
+
+volatile int ENABLE = FALSE; // Program starts disabled (off)
+
+void setup() {
+  *myportDDRB &= 0b11111011; // (PD2 Input Pin D2 ON/OFF Button)
+  *myportB |= 0b00000100; // Enable pullup on PD2
+
+  *myDDRH |= 0b01111000;
+  /*  *myPortH &= 0b1RYGB111; // Clear 
+      *myPortH |= 0b0RYGB000; // LED on
+
+      LED_R 9 - PH6  Red LED
+      LED_Y 8 - PH5  Yellow LED
+      LED_G 7 - PH4  Green LED
+      LED_B 6 - PH3  Blue LED
+  */  
+  *myEICRB |= 0b00000011; // Enables rising edge interrupts
+  *myEIMSK |= 0b00000001; // Enable INT0 in EIMSK at bit 0
+  *mySREG |= 0b10000000; // Enables global interrupts
+}
+
+void loop() {
+  if (ENABLE == TRUE){ // ** Enabled State **
+    
+    /* if (Idle){
+      *myPortH &= 0b10010111; // Clear R/Y/B
+      *myPortH |= 0b00010000; // Green LED on
+    }
+    */
+
+    /* if (Running){
+      *myPortH &= 0b10001111; // Clear R/Y/G
+      *myPortH |= 0b00001000; // Blue LED on
+    }
+    */
+    
+
+    /* if (Error){
+      *myPortH &= 0b11000111; // Clear Y/G/B
+      *myPortH |= 0b01000000; // Red LED on
+    }
+    */
+  }
+  else if (ENABLE == FALSE){ //** Disabled State **
+    *myPortH &= 0b11000111; // Clear R/G/B
+    *myPortH |= 0b00100000; // Yellow LED on
+  }
+
+}
+
+ISR (INT0_vect){
+  ENABLE ^= 1;
+}
