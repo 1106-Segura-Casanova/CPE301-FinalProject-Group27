@@ -27,10 +27,12 @@ volatile unsigned char *mySREG    = (unsigned char *)0x5F;
 volatile unsigned char *myDDRH    = (unsigned char *)0x101;
 volatile unsigned char *myPortH   = (unsigned char *)0x102;
 
+volatile int value = 0;
 
 volatile unsigned char ENABLE = FALSE; // Program starts disabled (off)
 
 void setup() {
+  Serial.begin(9600);
   *myDDRE &= 0b11101111; // (PE4 Input Pin D2 ON/OFF Button)
   *myPortE |= 0b00010000; // Enable pullup on PE4
 
@@ -50,18 +52,18 @@ void setup() {
 
 void loop() {
   if (ENABLE == TRUE){ // ** Enabled State **
-    
+
     /* if (Idle){
       *myPortH &= 0b10000111; // Clear
       *myPortH |= 0b00010000; // Green LED on
     }
     */
 
-    /* if (Running){
+    if (ENABLE == TRUE){ // Running State
       *myPortH &= 0b10000111; // Clear
       *myPortH |= 0b00001000; // Blue LED on
     }
-    */
+    
     
 
     /* if (Error){
@@ -79,4 +81,5 @@ void loop() {
 
 ISR (INT4_vect){
   ENABLE ^= 1; // Toggles Enabled/Disabled
+  Serial.println("BUTTON PRESSED");
 }
