@@ -4,9 +4,16 @@
 #define FALSE 0
 #include <LiquidCrystal.h>
 
+
             // CASANOVA 12-7-25 //      START
+#include <DHT.h>
 #define RDA 0x80
 #define TBE 0x20  
+#define WATERTHRESHOLD 90  //this line will change after testing (STATE: NOT TESTED)
+#define TEMPTHRESHOLD 74
+#define DHTPIN 56        // Change to YOUR pin number
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
             // CASANOVA 12-7-25 //      END
 
 // UART Pointers
@@ -98,6 +105,7 @@ void setup() {
             // CASANOVA 12-7-25 //      START
 // *** WATER SENSOR SETUP ***
   adc_init();
+  dht.begin();
             // CASANOVA 12-7-25 //      END
 }
 
@@ -108,7 +116,9 @@ void setup() {
 void loop() {
   if (ENABLE == TRUE) {  // ** Enabled State **
   
-
+            // CASANOVA 12-7-25 //      START
+    printWaterLevel(adc_read(0));
+            // CASANOVA 12-7-25 //      END
 
     /* if (Idle){
       *myPortH &= 0b10000111; // Clear
@@ -121,30 +131,23 @@ void loop() {
       *myPortH |= 0b00001000;  // Blue LED on
     }
 
-
-
-    /* if (Error){
-      *myPortH &= 0b10000111; // Clear
-      *myPortH |= 0b01000000; // Red LED on
-    }
-    */
               // CASANOVA 12-7-25 //      START
-    if (Error(adc_read()) == TRUE){
+    if (Error(adc_read(0)) == TRUE){
       *myPortH &= 0b10000111; // Clear
       *myPortH |= 0b01000000; // Red LED on
+      //motorOn(FALSE);
+    }
+    if (Idle(getTemperature()) == TRUE){
+      *myPortH &= 0b10000111; // Clear
+      *myPortH |= 0b00010000; // Green LED on
     }
                // CASANOVA 12-7-25 //      END
-
 
   } else if (ENABLE == FALSE) {  // ** Disabled State **
     *myPortH &= 0b10000111;      // Clear
     *myPortH |= 0b00100000;      // Yellow LED on
     delay(100);
   }
-              // CASANOVA 12-7-25 //      START
-  printWaterLevel(adc_read());
-            // CASANOVA 12-7-25 //      END
-
 }
 
 
@@ -229,8 +232,8 @@ void printWaterLevel(unsigned int level) {
   putChar('\n');
 }
 //WATER LEVEL ERROR CONDITIONS OUTPUT
-void Error(unsigned int level){
-  int threshold = 90;              //this line will change after testing (STATE: NOT TESTED)
+bool Error(unsigned int level){
+  int threshold = WATERTHRESHOLD;             
   int waterlevel = adc_read(0);    
   if (threshold > waterlevel){
     return (0);
@@ -238,7 +241,26 @@ void Error(unsigned int level){
     return (1);
   }
 }
-
+// ========= TEMPERATURE SENSOR FUNCTIONS =========
+int getTemperature(){
+  int temp = dht.readTemperature(true);  
+  if (temp < -40 || temp > 180) return -1;  // Error
+  return (temp);
+}
+int getHumidity(){
+  int humid = dht.readHumidity();
+  if (humid < 0 || humid > 100) return -1;  // Error
+  return (humid);
+}
+bool Idle(unsigned int temp){
+  int threshold = TEMPTHRESHOLD;             
+  int temperature = temp;    
+  if (threshold < temperature){
+    return (1);
+  } else {
+    return (0);
+  }
+}
             // CASANOVA 12-7-25 //      END
 
 // ========= UART FUNCTIONS =========
@@ -266,7 +288,7 @@ unsigned char getChar() {
 void putChar(unsigned char U0pdata) {
   while (!(*myUCSR0A & 1 << 5));
   *myUDR0 = U0pdata;
-  *myUDR0 = '\n';
+  //*myUDR0 = '\n';
 }
 
 // ----   NATHAN 12/7 Stepper Motor Progress:   ------ 
@@ -333,4 +355,3 @@ void putChar(unsigned char U0pdata) {
 //   delay(d);
 //   }
 // }
-
