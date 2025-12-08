@@ -268,3 +268,69 @@ void putChar(unsigned char U0pdata) {
   *myUDR0 = U0pdata;
   *myUDR0 = '\n';
 }
+
+// ----   NATHAN 12/7 Stepper Motor Progress:   ------ 
+
+// int d;
+// int CCW;
+// int CW;
+//  ---    SETUP ---  {
+//   // Set pins 49,47,45,43 as OUTPUT
+//   DDRL |= 0b01010101;
+//   PORTL &= 0b10101010;
+  
+//   DDRH &= 0b11111110;  // Clear PH0
+//   //PORTH |= 0b00000001; // Enable pull up
+
+//   // Set pin 26 input
+//   DDRH &= 0b11111011;  // Clear PH2
+//   //PORTH |= 0b00000100; // Enable pull up
+
+
+//   d = 10;
+// }
+
+//. ------ LOOP -----{
+
+//   CCW = PINH & 0b00000001;
+//   if(CCW == 0){
+//     CW = PINH & 0b00000100;
+//   }
+  
+//   if(CW){
+//   //pin 49 ON, other control pins OFF
+//   PORTL = (PORTL & 0b10101010) | 0b00000001; // PL0 HIGH
+//   delay(d);
+
+//   //pin 47 ON, other control pins OFF
+//   PORTL = (PORTL & 0b10101010) | 0b00000100; // PL2 HIGH
+//   delay(d);
+
+//   //pin 45 ON, other control pins OFF
+//   PORTL = (PORTL & 0b10101010) | 0b00010000; // PL4 HIGH
+//   delay(d);
+
+//   //pin 43 ON, other control pins OFF
+//   PORTL = (PORTL & 0b10101010) | 0b01000000; // PL6 HIGH
+//   delay(d);
+//   }
+  
+//   else if(CCW){
+//   //pin 43 ON, other control pins OFF
+//   PORTL = (PORTL & 0b10101010) | 0b01000000; // PL6 HIGH
+//   delay(d);
+
+//   //pin 45 ON, other control pins OFF
+//   PORTL = (PORTL & 0b10101010) | 0b00010000; // PL4 HIGH
+//   delay(d);
+
+//   //pin 47 ON, other control pins OFF
+//   PORTL = (PORTL & 0b10101010) | 0b00000100; // PL2 HIGH
+//   delay(d);
+
+//   //pin 49 ON, other control pins OFF
+//   PORTL = (PORTL & 0b10101010) | 0b00000001; // PL0 HIGH
+//   delay(d);
+//   }
+// }
+
