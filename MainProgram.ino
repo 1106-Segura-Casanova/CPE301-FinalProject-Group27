@@ -50,7 +50,9 @@ volatile unsigned char* my_ADCSRA = (unsigned char*) 0x7A;
 volatile unsigned int* my_ADC_DATA = (unsigned int*) 0x78;
             // CASANOVA 12-7-25 //      END
 
-
+            // CASANOVA 12-9-25 //      START
+volatile unsigned char RESET = FALSE;            
+            // CASANOVA 12-9-25 //      END
 volatile int value = 0;
 volatile unsigned char ENABLE = FALSE;  // Program starts disabled (off)
 unsigned int currentTicks = 65535;
@@ -87,7 +89,11 @@ void setup() {
   *myEICRB = (*myEICRB & 0b11111100) | 0b00000011;  // Enables rising edge interrupts
   *myEIMSK |= 0b00010000;                           // Enable INT4 in EIMSK at bit 4
   *mySREG |= 0b10000000;                            // Enables global interrupts
-
+              // CASANOVA 12-9-25 //      START
+  *myDDRE &= 0b11011111;   // PE5 as INPUT
+  *myPortE |= 0b00110000;  // Enable pullup on PE5
+  *myEIMSK |= 0b00110000;  // Enable INT4 and INT5
+              // CASANOVA 12-9-25 //      END
 // *** TIMER SETUP ***
   *myDDRB |= 0b01000000; // PB6 output (pin 12)
   *myportB &= 0b10111111; // set PB6 low
@@ -117,31 +123,41 @@ void loop() {
   if (ENABLE == TRUE) {  // ** Enabled State **
   
             // CASANOVA 12-7-25 //      START
-    printWaterLevel(adc_read(0));
+    printWaterLevel(adc_read(0)); // usable code snippet for clock
             // CASANOVA 12-7-25 //      END
 
     /* if (Idle){
       *myPortH &= 0b10000111; // Clear
       *myPortH |= 0b00010000; // Green LED on
     }
-    */
-
     if (ENABLE == TRUE) {      // Running State
       *myPortH &= 0b10000111;  // Clear
       *myPortH |= 0b00001000;  // Blue LED on
     }
-
-              // CASANOVA 12-7-25 //      START
-    if (Error(adc_read(0)) == TRUE){
+    */
+              // CASANOVA 12-9-25 //      START
+    // == ERROR == 
+    while (Error(adc_read(0)) == TRUE){
       *myPortH &= 0b10000111; // Clear
       *myPortH |= 0b01000000; // Red LED on
-      //motorOn(FALSE);
+      if(RESET == TRUE){
+        break;
+      }
     }
-    if (Idle(getTemperature()) == TRUE){
+    // == IDLE == 
+    while((Idle(getTemperature()) == TRUE && Error(adc_read(0)) == FALSE) || RESET == TRUE ){
       *myPortH &= 0b10000111; // Clear
       *myPortH |= 0b00010000; // Green LED on
+      // need to implement clock and LED display
     }
-               // CASANOVA 12-7-25 //      END
+    RESET = 0;
+    //  == RUNNING == 
+    while(Idle(getTemperature()) == FALSE && Error(adc_read(0)) == FALSE){
+      // ADD FAN MOTOR CODE
+      *myPortH &= 0b10000111;  // Clear
+      *myPortH |= 0b00001000;  // Blue LED on
+    }
+              // CASANOVA 12-9-25 //      END
 
   } else if (ENABLE == FALSE) {  // ** Disabled State **
     *myPortH &= 0b10000111;      // Clear
@@ -157,6 +173,12 @@ ISR(INT4_vect) {
   ENABLE ^= 1;  // Toggle
   Serial.println("BUTTON PRESSED");
 }
+              // CASANOVA 12-9-25 //      START
+ISR(INT5_vect) {
+  RESET = 1;  // NO TOGGLE 
+  Serial.println("BUTTON PRESSED");
+}
+              // CASANOVA 12-9-25 //      END
 
 // ========== TIMER FUNCTIONS ==========
 void setup_timer_regs() {
