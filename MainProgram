@@ -3,6 +3,7 @@
 #define TRUE 1
 #define FALSE 0
 #include <LiquidCrystal.h>
+#include <RTClib.h>
 
 // UART Pointers
 volatile unsigned char *myUCSR0A = (unsigned char *)0xC0;
@@ -12,7 +13,7 @@ volatile unsigned int *myUBRR0 = (unsigned int *)0xC4;
 volatile unsigned char *myUDR0 = (unsigned char *)0xC6;
 // GPIO Pointers
 volatile unsigned char *myPortE = (unsigned char *)0x2E;
-volatile unsigned char *myDDRE = (unsigned char *)0x2D;
+volatile unsigned char *myDDRE =   (unsigned char *)0x2D;
 volatile unsigned char *myportB = (unsigned char *) 0x25;
 volatile unsigned char *myDDRB = (unsigned char *) 0x24;
 // Timer Pointers
@@ -34,6 +35,20 @@ volatile int value = 0;
 volatile unsigned char ENABLE = FALSE;  // Program starts disabled (off)
 unsigned int currentTicks = 65535;
 unsigned char timer_running = 0;
+
+// *** Motor Stuff ***
+int d = 3;
+int CCW;
+int CW;
+// Pointers for ports
+volatile unsigned char *myDDRL  = (unsigned char *)0x106; // PL
+volatile unsigned char *myPORTL = (unsigned char *)0x107;
+volatile unsigned char *myPINH  = (unsigned char *)0x100;
+
+// *** Real Time Clock ***
+RTC_DS3231 rtc;
+char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
+"Friday", "Saturday"};
 
 // *** LCD SCREEN ***
 const int RS = 23, EN = 25, D4 = 22, D5 = 24, D6 = 26, D7 = 28;
@@ -78,18 +93,104 @@ void setup() {
   lcd.setCursor(0,0);
   lcd.write((byte)1);
 
+// *** MOTOR SETUP *** (NATHAN)
+// Set PL0, PL2, PL4, PL6 as OUTPUT
+  *myDDRL |= 0b01010101;
+  *myPORTL &= 0b10101010; // all LEDs off
+
+  // Set buttons PH0 (pin 17) and PH1 (pin 16) as INPUT
+  *myDDRH &= 0b11111100;  // clear bits 0 and 1
+  *myPortH |= 0b00000011; // enable internal pull-ups
+
+// *** RTC ***
+  rtc.begin();
+  Serial.println("DS1307RTC Read Test");
+  Serial.println("-------------------");
+
   U0Init(9600);
   Serial.begin(9600);
 }
 
-
+int i = 0;
 
 
 
 void loop() {
-  if (ENABLE == TRUE) {  // ** Enabled State **
-  
+  /*DateTime now1 = rtc.now();
+  DateTime now = now1 - TimeSpan(0,16,7,0);
+   Serial.print(now.year(), DEC);
+   Serial.print('/');
+   Serial.print(now.month(), DEC);
+   Serial.print('/');
+   Serial.print(now.day(), DEC);
+   Serial.print(" (");
+   Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+   Serial.print(") ");
+   Serial.print(now.hour(), DEC);
+   Serial.print(':');
+   Serial.print(now.minute(), DEC);
+   Serial.print(':');
+   Serial.print(now.second(), DEC);
+   Serial.println();
+   delay(3000);
+  */
+  lcd.clear();
+  lcd.setCursor(6,1);
+  lcd.print(i);
+  i++;
+  delay(500);
 
+  if (ENABLE == TRUE) {  // ** Enabled State **
+  // *** VENT CONTROL ***
+    // Read buttons (active high)
+    CCW = (*myPINH & 0b00000001);
+    CW = (*myPINH & 0b00000010);
+    if(CW>0){
+      CW = 1;
+    }
+    if (CW == CCW){ CW = 0; CCW = 0; }
+
+    Serial.print("CCW: "); Serial.print(CCW);
+    Serial.print("  CW: "); Serial.println(CW);
+
+    if(CW){
+    //pin 49 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b00000001;
+    delay(d);
+
+    //pin 47 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b00000100;
+    delay(d);
+
+    //pin 45 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b00010000;
+    delay(d);
+
+    //pin 43 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b01000000;
+    delay(d);
+    }
+
+    else if(CCW){
+    //pin 43 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b01000000;
+    delay(d);
+
+    //pin 45 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b00010000;
+    delay(d);
+
+    //pin 47 ON, other control pins OFF
+    PORTL = ((PORTL & 0b10101010) | 0b00000100);
+    delay(d);
+
+    //pin 49 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b00000001; // PL0 HIGH
+    delay(d);
+    }
+    else {
+      PORTL = (PORTL & 0b10101010) | 0b00000000;
+    }
 
     /* if (Idle){
       *myPortH &= 0b10000111; // Clear
@@ -97,11 +198,11 @@ void loop() {
     }
     */
 
-    if (ENABLE == TRUE) {      // Running State
+    /*if (ENABLE == TRUE) {      // Running State
       *myPortH &= 0b10000111;  // Clear
       *myPortH |= 0b00001000;  // Blue LED on
     }
-
+    */
 
 
     /* if (Error){
@@ -109,7 +210,8 @@ void loop() {
       *myPortH |= 0b01000000; // Red LED on
     }
     */
-  } else if (ENABLE == FALSE) {  // ** Disabled State **
+  } 
+  else if (ENABLE == FALSE) {  // ** Disabled State **
     *myPortH &= 0b10000111;      // Clear
     *myPortH |= 0b00100000;      // Yellow LED on
     delay(100);
