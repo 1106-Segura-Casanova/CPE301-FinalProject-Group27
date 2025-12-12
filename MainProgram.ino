@@ -15,7 +15,10 @@
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
             // CASANOVA 12-7-25 //      END
-
+            // CASANOVA 12-10-25 //      START
+unsigned long previousMillis = 0;  
+const long interval = 1000; 
+            // CASANOVA 12-10-25 //      END            
 // UART Pointers
 volatile unsigned char *myUCSR0A = (unsigned char *)0xC0;
 volatile unsigned char *myUCSR0B = (unsigned char *)0xC1;
@@ -121,23 +124,20 @@ void setup() {
 
 void loop() {
   if (ENABLE == TRUE) {  // ** Enabled State **
-  
-            // CASANOVA 12-7-25 //      START
-    printWaterLevel(adc_read(0)); // usable code snippet for clock
-            // CASANOVA 12-7-25 //      END
 
-    /* if (Idle){
-      *myPortH &= 0b10000111; // Clear
-      *myPortH |= 0b00010000; // Green LED on
-    }
-    if (ENABLE == TRUE) {      // Running State
-      *myPortH &= 0b10000111;  // Clear
-      *myPortH |= 0b00001000;  // Blue LED on
-    }
-    */
+            // CASANOVA 12-10-25 //      START
+  //60 second temp/water clock
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+    printWaterLevel(adc_read(0)); // output to LCD
+  }
+            // CASANOVA 12-10-25 //      END    
+
               // CASANOVA 12-9-25 //      START
     // == ERROR == 
-    while (Error(adc_read(0)) == TRUE){
+    error = Error(adc_read(0));
+    while (error == TRUE){
       *myPortH &= 0b10000111; // Clear
       *myPortH |= 0b01000000; // Red LED on
       if(RESET == TRUE){
@@ -163,8 +163,15 @@ void loop() {
     *myPortH &= 0b10000111;      // Clear
     *myPortH |= 0b00100000;      // Yellow LED on
     delay(100);
+    error = 0;
   }
 }
+
+              // CASANOVA 12-11-25 //      START
+// ============ CLOCK ============
+
+              // CASANOVA 12-11-25 //      END
+
 
 
 
@@ -310,7 +317,6 @@ unsigned char getChar() {
 void putChar(unsigned char U0pdata) {
   while (!(*myUCSR0A & 1 << 5));
   *myUDR0 = U0pdata;
-  //*myUDR0 = '\n';
 }
 
 // ----   NATHAN 12/7 Stepper Motor Progress:   ------ 
@@ -377,3 +383,22 @@ void putChar(unsigned char U0pdata) {
 //   delay(d);
 //   }
 // }
+
+/*
+Record the time and date every time the motor is turned on or of. This information
+should be transmitted to a host computer (over USB)
+
+The real-time clock module must be used for event reporting.
+– You may use the Arduino library for the clock
+
+Humidity and temperature should be continuously monitored and reported on the LDC
+screen. Updates should occur once per minute
+
+(IDLE)
+Exact time stamp (using real time clock) should record transition times
+
+*/
+
+
+
+
