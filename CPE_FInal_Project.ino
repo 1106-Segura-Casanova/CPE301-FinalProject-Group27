@@ -3,12 +3,12 @@
 #define TRUE 1
 #define FALSE 0
 #include <LiquidCrystal.h>
-
+#include <RTClib.h>
 #include <DHT.h>
 #define RDA 0x80
 #define TBE 0x20  
 #define WATERTHRESHOLD 10  //this line will change after testing (STATE: NOT TESTED)
-#define TEMPTHRESHOLD 70
+#define TEMPTHRESHOLD 72
 #define DHTPIN 56        // Change to YOUR pin number
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
@@ -34,6 +34,10 @@ volatile unsigned char *myTCCR1C = (unsigned char *)0x82;
 volatile unsigned char *myTIMSK1 = (unsigned char *)0x6F;
 volatile unsigned char *myTIFR1 = (unsigned char *)0x16;
 volatile unsigned int *myTCNT1 = (unsigned int *)0x85;
+volatile unsigned char *myTCCR2A = (unsigned char *)0xB0;
+volatile unsigned char *myTCCR2B = (unsigned char *)0xB1;
+volatile unsigned char *myTCNT2 = (unsigned char *)0xB2;
+volatile unsigned char *myTIFR2 = (unsigned char *)0x37;
 // Interrupt Pointers
 volatile unsigned char *myEICRB = (unsigned char *)0x6A;
 volatile unsigned char *myEIMSK = (unsigned char *)0x3D;
@@ -41,15 +45,24 @@ volatile unsigned char *mySREG = (unsigned char *)0x5F;
 // LED Pointers
 volatile unsigned char *myDDRH = (unsigned char *)0x101;
 volatile unsigned char *myPortH = (unsigned char *)0x102;
-
-            // CASANOVA 12-7-25 //      START
 // ADC Pointers (Water Sensor)
 volatile unsigned char* my_ADMUX = (unsigned char*) 0x7C;
 volatile unsigned char* my_ADCSRB = (unsigned char*) 0x7B;
 volatile unsigned char* my_ADCSRA = (unsigned char*) 0x7A;
 volatile unsigned int* my_ADC_DATA = (unsigned int*) 0x78;
+// *** Motor Stuff ***
+int d = 3;
+int CCW;
+int CW;
+// Pointers for ports
+volatile unsigned char *myDDRL  = (unsigned char *)0x106; // PL
+volatile unsigned char *myPORTL = (unsigned char *)0x107;
+volatile unsigned char *myPINH  = (unsigned char *)0x100;
 
-
+// *** Real Time Clock ***
+RTC_DS3231 rtc;
+char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
+"Friday", "Saturday"};
 
 volatile unsigned char RESET = FALSE;            
 
@@ -57,6 +70,7 @@ volatile int value = 0;
 volatile unsigned char ENABLE = FALSE;  // Program starts disabled (off)
 unsigned int currentTicks = 65535;
 unsigned char timer_running = 0;
+unsigned int pastDate = 0;
 
 // *** LCD SCREEN ***
 const int RS = 23, EN = 25, D4 = 22, D5 = 24, D6 = 26, D7 = 28;
@@ -91,11 +105,11 @@ void setup() {
   *myEICRB = (*myEICRB & 0b11111100) | 0b00000011;  // Enables rising edge interrupts
   *myEIMSK |= 0b00010000;                           // Enable INT4 in EIMSK at bit 4
   *mySREG |= 0b10000000;                            // Enables global interrupts
-              // CASANOVA 12-9-25 //      START
+
   *myDDRE &= 0b11011111;   // PE5 as INPUT
   *myPortE |= 0b00110000;  // Enable pullup on PE5
   *myEIMSK |= 0b00110000;  // Enable INT4 and INT5
-              // CASANOVA 12-9-25 //      END
+
 // *** TIMER SETUP ***
   *myDDRB |= 0b01000000; // PB6 output (pin 12)
   *myportB &= 0b10111111; // set PB6 low
@@ -107,14 +121,27 @@ void setup() {
   lcd.setCursor(0,0);
   lcd.write((byte)1);
 
+// *** MOTOR SETUP ***
+  pinMode(A7, OUTPUT);
+// Set PL0, PL2, PL4, PL6 as OUTPUT
+  *myDDRL |= 0b01010101;
+  *myPORTL &= 0b10101010; // all LEDs off
+
+  // Set buttons PH0 (pin 17) and PH1 (pin 16) as INPUT
+  *myDDRH &= 0b11111100;  // clear bits 0 and 1
+  *myPortH |= 0b00000011; // enable internal pull-ups
+
+// *** RTC ***
+  rtc.begin();
+  
   U0Init(9600);
   Serial.begin(9600);
 
-            // CASANOVA 12-7-25 //      START
+
 // *** WATER SENSOR SETUP ***
   adc_init();
   dht.begin();
-            // CASANOVA 12-7-25 //      END
+
 }
 
 
@@ -122,73 +149,229 @@ void setup() {
 
 
 void loop() {
-  //60 second temp/water clock
-  unsigned long currentMillis = millis();
-  if (currentMillis - previousMillis >= interval) {
-    previousMillis = currentMillis;
-    printWaterLevel(adc_read(0)); // output to LCD
-    Serial.print(getTemperature());
-
-  }
-
-
+  ventControl();
     // == ERROR == 
     error = Error(adc_read(0));
-    while ((error == TRUE) && (ENABLE == TRUE)){
+    while ((Error(adc_read(0)) == TRUE) && (ENABLE == TRUE)){
+      timeCheck('Y');
       *myPortH &= 0b10000111; // Clear
       *myPortH |= 0b01000000; // Red LED on
+      clockChange(0);
+      ventControl();
+      analogWrite(A7, 0);
+      adc_read(0);
+      getTemperature();
       RESET = 0;
       if(RESET == TRUE){
         break;
       }
+      /*Serial.println("Error Water Level:  ");
+      Serial.println(adc_read(0));
+      Serial.println("Error Temp:  ");
+      Serial.println(getTemperature());
+      delay(1000); */
+      Idle(getTemperature());
+      Error(adc_read(0));
     }
     // == IDLE == 
-    while(((Idle(getTemperature()) == TRUE && Error(adc_read(0)) == FALSE) || RESET == TRUE) && (ENABLE == TRUE)){
+    while(((Idle(getTemperature()) == TRUE && Error(adc_read(0)) == FALSE) && RESET == TRUE) && (ENABLE == TRUE)){
+      timeCheck('N');
       *myPortH &= 0b10000111; // Clear
       *myPortH |= 0b00010000; // Green LED on
+      clockChange(1);
+      ventControl();
+      analogWrite(A7, 0);
+      adc_read(0);
+      getTemperature();
       // need to implement clock and LED display
-      Serial.print("IDLE?  ");
-      Serial.println(Idle(getTemperature()));
-      Serial.print("ERROR?  ");
-      Serial.println(Error(adc_read(0)));
-      delay(1000);
+      /*Serial.println("Idle Water Level:  ");
+      Serial.println(adc_read(0));
+      Serial.println("Idle Temp:  ");
+      Serial.println(getTemperature());
+      delay(1000); */
+      Idle(getTemperature());
+      Error(adc_read(0));
     }
     //  == RUNNING == 
-    while((Idle(getTemperature()) == FALSE && Error(adc_read(0)) == FALSE) && (ENABLE == TRUE)){
-      // ADD FAN MOTOR CODE
+    while((Idle(getTemperature()) == FALSE && Error(adc_read(0)) == FALSE && RESET == TRUE) && (ENABLE == TRUE)){
+      timeCheck('N');
       *myPortH &= 0b10000111;  // Clear
       *myPortH |= 0b00001000;  // Blue LED on
-
+      clockChange(2);
+      ventControl();
+      analogWrite(A7, 150);
+      adc_read(0);
+      getTemperature();
+      /*Serial.println("Running Water Level:  ");
+      Serial.println(adc_read(0));
+      Serial.println("Running Temp:  ");
+      Serial.println(getTemperature());
+      delay(1000);*/
+      Idle(getTemperature());
+      Error(adc_read(0));
     }
 
 
     while(ENABLE == FALSE) {  // ** Disabled State **
+      clockChange(3);
+      analogWrite(A7, 0);
       *myPortH &= 0b10000111;      // Clear
       *myPortH |= 0b00100000;      // Yellow LED on
-      delay(100);
       error = 0;
+      timeCheck('D');
+      //Serial.println("lcd");
+      //delay(500);
   }
 }
 
-              // CASANOVA 12-11-25 //      START
+// ============ DELAY FUNCTION ============
+void myDelay (unsigned int ms){
+  *myTCCR2A = 0x00;
+  *myTCCR2B = 0x00;
+  while (ms--){
+    *myTCNT2 = 6;
+    *myTIFR2 = 0x01;
+    *myTCCR2B = 0b00000100;
+    while (!(*myTIFR2 & 0x01));
+  }
+  *myTCCR2B = 0x00;
+}
+
+// ============ LCD UPDATE TIMER (ONE MINTUE) ============
+void timeCheck(unsigned char state){ 
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+    lcdDisplay(state);
+  }
+}
+
+// ============ LCD ============
+void lcdDisplay(unsigned char errorState){
+  if (errorState == 'Y'){
+    lcd.clear();
+    lcd.setCursor(2,0);
+    lcd.print("Water  level");
+    lcd.setCursor(3,1);
+    lcd.print("is too low");
+  }
+  else if (errorState == 'N'){
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Temp: ");
+    lcd.setCursor(6,0);
+    lcd.print(getTemperature());
+    lcd.setCursor(0,1);
+    lcd.print("Humidity:");
+    lcd.setCursor(10,1);
+    lcd.print(adc_read(0));
+  }
+  else if (errorState == 'D'){
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("====DISABLED====");
+    lcd.setCursor(0,1);
+    lcd.print("================");
+  }
+}
+
 // ============ CLOCK ============
+void clockToSerial(){
+  DateTime now1 = rtc.now();
+  DateTime now = now1 - TimeSpan(0,16,7,0);
+  put4(now.year());
+  putChar('/');
+  put2(now.month());
+  putChar('/');
+  put2(now.day());
+  putChar(' ');
+  putString(daysOfTheWeek[now.dayOfTheWeek()]);
+  putChar(' ');
+  put2(now.hour());
+  putChar(':');
+  put2(now.minute());
+  putChar(':');
+  put2(now.second());
+  putChar('\n');
+}
+void clockChange(unsigned int state){
+  if (pastDate != state){
+    clockToSerial();
+  }
+  pastDate = state;
+}
 
-              // CASANOVA 12-11-25 //      END
+// ========== VENT CONTROL ===========
+void ventControl(){
+    // Read buttons (active high)
+    CCW = (*myPINH & 0b00000001);
+    CW = (*myPINH & 0b00000010);
+    if(CW>0){
+      CW = 1;
+    }
+    if (CW == CCW){ CW = 0; CCW = 0; }
 
+    //Serial.print("CCW: "); Serial.print(CCW);
+    //Serial.print("  CW: "); Serial.println(CW);
+    if (CW){  
+      lcd.setCursor(15,1);
+      lcd.print("<");
+    }
+    else if (CCW){
+      lcd.setCursor(15,1);
+      lcd.print(">");
+    }
 
+    if(CW){
+    //pin 49 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b00000001;
+    myDelay(d);
+
+    //pin 47 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b00000100;
+    myDelay(d);
+
+    //pin 45 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b00010000;
+    myDelay(d);
+
+    //pin 43 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b01000000;
+    myDelay(d);
+    }
+
+    else if(CCW){
+    //pin 43 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b01000000;
+    myDelay(d);
+
+    //pin 45 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b00010000;
+    myDelay(d);
+
+    //pin 47 ON, other control pins OFF
+    PORTL = ((PORTL & 0b10101010) | 0b00000100);
+    myDelay(d);
+
+    //pin 49 ON, other control pins OFF
+    PORTL = (PORTL & 0b10101010) | 0b00000001; // PL0 HIGH
+    myDelay(d);
+    }
+    else {
+      PORTL = (PORTL & 0b10101010) | 0b00000000;
+    }
+}
 
 
 // ========== BUTTON ENABLE/DISABLE INTERUPT ===========
 ISR(INT4_vect) {
   ENABLE ^= 1;  // Toggle
-  Serial.println("ENABLE/DISABLE");
 }
-              // CASANOVA 12-9-25 //      START
+
 ISR(INT5_vect) {
   RESET = 1;  // NO TOGGLE 
-  Serial.println("TOGGLE");
 }
-              // CASANOVA 12-9-25 //      END
+
 
 // ========== TIMER FUNCTIONS ==========
 void setup_timer_regs() {
@@ -208,7 +391,6 @@ ISR(TIMER1_OVF_vect) {
   }
 }
 
-            // CASANOVA 12-7-25 //      START
 // ========= WATER SENSOR FUNCTIONS =========
 void adc_init() 
 {
@@ -293,7 +475,6 @@ bool Idle(unsigned int temp){
     return (0);
   }
 }
-            // CASANOVA 12-7-25 //      END
 
 // ========= UART FUNCTIONS =========
 void U0Init(int U0baud) {
@@ -316,88 +497,25 @@ unsigned char getChar() {
   ch = *myUDR0;
   //Serial.print(ch);
   return ch;
-}
+} // CHARACTER PRINT FUNCTIONS ==========
 void putChar(unsigned char U0pdata) {
   while (!(*myUCSR0A & 1 << 5));
   *myUDR0 = U0pdata;
 }
-
-// ----   NATHAN 12/7 Stepper Motor Progress:   ------ 
-
-// int d;
-// int CCW;
-// int CW;
-//  ---    SETUP ---  {
-//   // Set pins 49,47,45,43 as OUTPUT
-//   DDRL |= 0b01010101;
-//   PORTL &= 0b10101010;
-  
-//   DDRH &= 0b11111110;  // Clear PH0
-//   //PORTH |= 0b00000001; // Enable pull up
-
-//   // Set pin 26 input
-//   DDRH &= 0b11111011;  // Clear PH2
-//   //PORTH |= 0b00000100; // Enable pull up
+void putString(const char *s){
+  while (*s) {
+    putChar(*s++);
+  }
+}
+void put2(unsigned int n){
+  putChar('0' + (n/10) % 10);
+  putChar('0' + (n % 10));
+}
+void put4(unsigned int n){
+  putChar('0' + (n/1000) % 10);
+  putChar('0' + (n/100) % 10);
+  putChar('0' + (n/10) % 10);
+  putChar('0' + (n % 10));
+}
 
 
-//   d = 10;
-// }
-
-//. ------ LOOP -----{
-
-//   CCW = PINH & 0b00000001;
-//   if(CCW == 0){
-//     CW = PINH & 0b00000100;
-//   }
-  
-//   if(CW){
-//   //pin 49 ON, other control pins OFF
-//   PORTL = (PORTL & 0b10101010) | 0b00000001; // PL0 HIGH
-//   delay(d);
-
-//   //pin 47 ON, other control pins OFF
-//   PORTL = (PORTL & 0b10101010) | 0b00000100; // PL2 HIGH
-//   delay(d);
-
-//   //pin 45 ON, other control pins OFF
-//   PORTL = (PORTL & 0b10101010) | 0b00010000; // PL4 HIGH
-//   delay(d);
-
-//   //pin 43 ON, other control pins OFF
-//   PORTL = (PORTL & 0b10101010) | 0b01000000; // PL6 HIGH
-//   delay(d);
-//   }
-  
-//   else if(CCW){
-//   //pin 43 ON, other control pins OFF
-//   PORTL = (PORTL & 0b10101010) | 0b01000000; // PL6 HIGH
-//   delay(d);
-
-//   //pin 45 ON, other control pins OFF
-//   PORTL = (PORTL & 0b10101010) | 0b00010000; // PL4 HIGH
-//   delay(d);
-
-//   //pin 47 ON, other control pins OFF
-//   PORTL = (PORTL & 0b10101010) | 0b00000100; // PL2 HIGH
-//   delay(d);
-
-//   //pin 49 ON, other control pins OFF
-//   PORTL = (PORTL & 0b10101010) | 0b00000001; // PL0 HIGH
-//   delay(d);
-//   }
-// }
-
-/*
-Record the time and date every time the motor is turned on or of. This information
-should be transmitted to a host computer (over USB)
-
-The real-time clock module must be used for event reporting.
-– You may use the Arduino library for the clock
-
-Humidity and temperature should be continuously monitored and reported on the LDC
-screen. Updates should occur once per minute
-
-(IDLE)
-Exact time stamp (using real time clock) should record transition times
-
-*/
