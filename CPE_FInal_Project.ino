@@ -8,13 +8,13 @@
 #define RDA 0x80
 #define TBE 0x20  
 #define WATERTHRESHOLD 10  //this line will change after testing (STATE: NOT TESTED)
-#define TEMPTHRESHOLD 72
+#define TEMPTHRESHOLD 74
 #define DHTPIN 56        // Change to YOUR pin number
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
 
 unsigned long previousMillis = 0;  
-const long interval = 1000; 
+const long interval = 60000; // updates every one minute for LCD display
      
 // UART Pointers
 volatile unsigned char *myUCSR0A = (unsigned char *)0xC0;
@@ -71,6 +71,7 @@ volatile unsigned char ENABLE = FALSE;  // Program starts disabled (off)
 unsigned int currentTicks = 65535;
 unsigned char timer_running = 0;
 unsigned int pastDate = 0;
+unsigned long previousStateMillis = 0;
 
 // *** LCD SCREEN ***
 const int RS = 23, EN = 25, D4 = 22, D5 = 24, D6 = 26, D7 = 28;
@@ -122,7 +123,7 @@ void setup() {
   lcd.write((byte)1);
 
 // *** MOTOR SETUP ***
-  pinMode(A7, OUTPUT);
+  pinMode(A7, OUTPUT); // For DC motor, analog write is allowed
 // Set PL0, PL2, PL4, PL6 as OUTPUT
   *myDDRL |= 0b01010101;
   *myPORTL &= 0b10101010; // all LEDs off
@@ -135,7 +136,7 @@ void setup() {
   rtc.begin();
   
   U0Init(9600);
-  Serial.begin(9600);
+//  Serial.begin(9600);
 
 
 // *** WATER SENSOR SETUP ***
@@ -296,7 +297,18 @@ void clockToSerial(){
 }
 void clockChange(unsigned int state){
   if (pastDate != state){
-    clockToSerial();
+    putChar('\n');
+    clockToSerial(); // prints current time (not Beijing China)
+    if (state == 2){
+      putString("FAN MOTOR ON\n"); // prints DC motor
+    }
+    putString("STATE CHANGE: "); // prints stage changes
+    unsigned long currentStateMillis = millis();
+    unsigned long deltaTms = currentStateMillis - previousStateMillis;
+    unsigned long deltaTs = deltaTms/1000;
+    put2(deltaTs);
+    putString(" seconds elapsed\n");
+    previousStateMillis = currentStateMillis;
   }
   pastDate = state;
 }
