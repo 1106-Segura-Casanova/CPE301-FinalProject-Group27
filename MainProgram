@@ -4,7 +4,18 @@
 #define FALSE 0
 #include <LiquidCrystal.h>
 #include <RTClib.h>
+#include <DHT.h>
+#define RDA 0x80
+#define TBE 0x20  
+#define WATERTHRESHOLD 10  //this line will change after testing (STATE: NOT TESTED)
+#define TEMPTHRESHOLD 72
+#define DHTPIN 56        // Change to YOUR pin number
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
 
+unsigned long previousMillis = 0;  
+const long interval = 1000; 
+     
 // UART Pointers
 volatile unsigned char *myUCSR0A = (unsigned char *)0xC0;
 volatile unsigned char *myUCSR0B = (unsigned char *)0xC1;
@@ -13,7 +24,7 @@ volatile unsigned int *myUBRR0 = (unsigned int *)0xC4;
 volatile unsigned char *myUDR0 = (unsigned char *)0xC6;
 // GPIO Pointers
 volatile unsigned char *myPortE = (unsigned char *)0x2E;
-volatile unsigned char *myDDRE =   (unsigned char *)0x2D;
+volatile unsigned char *myDDRE = (unsigned char *)0x2D;
 volatile unsigned char *myportB = (unsigned char *) 0x25;
 volatile unsigned char *myDDRB = (unsigned char *) 0x24;
 // Timer Pointers
@@ -30,12 +41,11 @@ volatile unsigned char *mySREG = (unsigned char *)0x5F;
 // LED Pointers
 volatile unsigned char *myDDRH = (unsigned char *)0x101;
 volatile unsigned char *myPortH = (unsigned char *)0x102;
-
-volatile int value = 0;
-volatile unsigned char ENABLE = FALSE;  // Program starts disabled (off)
-unsigned int currentTicks = 65535;
-unsigned char timer_running = 0;
-
+// ADC Pointers (Water Sensor)
+volatile unsigned char* my_ADMUX = (unsigned char*) 0x7C;
+volatile unsigned char* my_ADCSRB = (unsigned char*) 0x7B;
+volatile unsigned char* my_ADCSRA = (unsigned char*) 0x7A;
+volatile unsigned int* my_ADC_DATA = (unsigned int*) 0x78;
 // *** Motor Stuff ***
 int d = 3;
 int CCW;
@@ -50,6 +60,14 @@ RTC_DS3231 rtc;
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
 "Friday", "Saturday"};
 
+volatile unsigned char RESET = FALSE;            
+
+volatile int value = 0;
+volatile unsigned char ENABLE = FALSE;  // Program starts disabled (off)
+unsigned int currentTicks = 65535;
+unsigned char timer_running = 0;
+unsigned int pastDate = 0;
+
 // *** LCD SCREEN ***
 const int RS = 23, EN = 25, D4 = 22, D5 = 24, D6 = 26, D7 = 28;
 byte customChar[8] = {
@@ -63,6 +81,8 @@ byte customChar[8] = {
   0b00000
 };
 LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);
+
+bool error = 0;
 
 void setup() {
 // *** LED SETUP ***
@@ -82,6 +102,10 @@ void setup() {
   *myEIMSK |= 0b00010000;                           // Enable INT4 in EIMSK at bit 4
   *mySREG |= 0b10000000;                            // Enables global interrupts
 
+  *myDDRE &= 0b11011111;   // PE5 as INPUT
+  *myPortE |= 0b00110000;  // Enable pullup on PE5
+  *myEIMSK |= 0b00110000;  // Enable INT4 and INT5
+
 // *** TIMER SETUP ***
   *myDDRB |= 0b01000000; // PB6 output (pin 12)
   *myportB &= 0b10111111; // set PB6 low
@@ -93,7 +117,8 @@ void setup() {
   lcd.setCursor(0,0);
   lcd.write((byte)1);
 
-// *** MOTOR SETUP *** (NATHAN)
+// *** MOTOR SETUP ***
+  pinMode(A7, OUTPUT);
 // Set PL0, PL2, PL4, PL6 as OUTPUT
   *myDDRL |= 0b01010101;
   *myPORTL &= 0b10101010; // all LEDs off
@@ -109,39 +134,132 @@ void setup() {
 
   U0Init(9600);
   Serial.begin(9600);
+
+
+// *** WATER SENSOR SETUP ***
+  adc_init();
+  dht.begin();
+
 }
 
-int i = 0;
+
 
 
 
 void loop() {
-  /*DateTime now1 = rtc.now();
-  DateTime now = now1 - TimeSpan(0,16,7,0);
-   Serial.print(now.year(), DEC);
-   Serial.print('/');
-   Serial.print(now.month(), DEC);
-   Serial.print('/');
-   Serial.print(now.day(), DEC);
-   Serial.print(" (");
-   Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
-   Serial.print(") ");
-   Serial.print(now.hour(), DEC);
-   Serial.print(':');
-   Serial.print(now.minute(), DEC);
-   Serial.print(':');
-   Serial.print(now.second(), DEC);
-   Serial.println();
-   delay(3000);
-  */
-  lcd.clear();
-  lcd.setCursor(6,1);
-  lcd.print(i);
-  i++;
-  delay(500);
+  //60 second temp/water clock
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+    printWaterLevel(adc_read(0)); // output to LCD
+    Serial.print(getTemperature());
+  }
+  ventControl();
 
-  if (ENABLE == TRUE) {  // ** Enabled State **
-  // *** VENT CONTROL ***
+    // == ERROR == 
+    error = Error(adc_read(0));
+    while ((Error(adc_read(0)) == TRUE) && (ENABLE == TRUE)){
+      
+      /*Serial.println("Error Water Level:  ");
+      Serial.println(adc_read(0));
+      Serial.println("Error Temp:  ");
+      Serial.println(getTemperature());
+      delay(1000); */
+
+      *myPortH &= 0b10000111; // Clear
+      *myPortH |= 0b01000000; // Red LED on
+      clockChange(0);
+      ventControl();
+      analogWrite(A7, 0);
+      adc_read(0);
+      getTemperature();
+      RESET = 0;
+      if(RESET == TRUE){
+        break;
+      }
+
+      Idle(getTemperature());
+      Error(adc_read(0));
+    }
+    // == IDLE == 
+    while(((Idle(getTemperature()) == TRUE && Error(adc_read(0)) == FALSE) && RESET == TRUE) && (ENABLE == TRUE)){
+      
+      *myPortH &= 0b10000111; // Clear
+      *myPortH |= 0b00010000; // Green LED on
+      clockChange(1);
+      ventControl();
+      analogWrite(A7, 0);
+      adc_read(0);
+      getTemperature();
+      // need to implement clock and LED display
+      /*Serial.println("Idle Water Level:  ");
+      Serial.println(adc_read(0));
+      Serial.println("Idle Temp:  ");
+      Serial.println(getTemperature());
+      delay(1000); */
+
+      Idle(getTemperature());
+      Error(adc_read(0));
+    }
+    //  == RUNNING == 
+    while((Idle(getTemperature()) == FALSE && Error(adc_read(0)) == FALSE && RESET == TRUE) && (ENABLE == TRUE)){
+      
+      *myPortH &= 0b10000111;  // Clear
+      *myPortH |= 0b00001000;  // Blue LED on
+      clockChange(2);
+      ventControl();
+      analogWrite(A7, 255);
+      adc_read(0);
+      getTemperature();
+      /*Serial.println("Running Water Level:  ");
+      Serial.println(adc_read(0));
+      Serial.println("Running Temp:  ");
+      Serial.println(getTemperature());
+      delay(1000);*/
+
+      Idle(getTemperature());
+      Error(adc_read(0));
+    }
+
+
+    while(ENABLE == FALSE) {  // ** Disabled State **
+      clockChange(3);
+      analogWrite(A7, 0);
+      *myPortH &= 0b10000111;      // Clear
+      *myPortH |= 0b00100000;      // Yellow LED on
+      error = 0;
+  }
+}
+
+
+// ============ CLOCK ============
+void clockToSerial(){
+  DateTime now1 = rtc.now();
+  DateTime now = now1 - TimeSpan(0,16,7,0);
+  Serial.print(now.year(), DEC);
+  Serial.print('/');
+  Serial.print(now.month(), DEC);
+  Serial.print('/');
+  Serial.print(now.day(), DEC);
+  Serial.print(" (");
+  Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+  Serial.print(") ");
+  Serial.print(now.hour(), DEC);
+  Serial.print(':');
+  Serial.print(now.minute(), DEC);
+  Serial.print(':');
+  Serial.print(now.second(), DEC);
+  Serial.println();
+}
+void clockChange(unsigned int state){
+  if (pastDate != state){
+    clockToSerial();
+  }
+  pastDate = state;
+}
+
+// ========== VENT CONTROL ===========
+void ventControl(){
     // Read buttons (active high)
     CCW = (*myPINH & 0b00000001);
     CW = (*myPINH & 0b00000010);
@@ -150,8 +268,8 @@ void loop() {
     }
     if (CW == CCW){ CW = 0; CCW = 0; }
 
-    Serial.print("CCW: "); Serial.print(CCW);
-    Serial.print("  CW: "); Serial.println(CW);
+    //Serial.print("CCW: "); Serial.print(CCW);
+    //Serial.print("  CW: "); Serial.println(CW);
 
     if(CW){
     //pin 49 ON, other control pins OFF
@@ -191,40 +309,20 @@ void loop() {
     else {
       PORTL = (PORTL & 0b10101010) | 0b00000000;
     }
-
-    /* if (Idle){
-      *myPortH &= 0b10000111; // Clear
-      *myPortH |= 0b00010000; // Green LED on
-    }
-    */
-
-    /*if (ENABLE == TRUE) {      // Running State
-      *myPortH &= 0b10000111;  // Clear
-      *myPortH |= 0b00001000;  // Blue LED on
-    }
-    */
-
-
-    /* if (Error){
-      *myPortH &= 0b10000111; // Clear
-      *myPortH |= 0b01000000; // Red LED on
-    }
-    */
-  } 
-  else if (ENABLE == FALSE) {  // ** Disabled State **
-    *myPortH &= 0b10000111;      // Clear
-    *myPortH |= 0b00100000;      // Yellow LED on
-    delay(100);
-  }
 }
-
 
 
 // ========== BUTTON ENABLE/DISABLE INTERUPT ===========
 ISR(INT4_vect) {
   ENABLE ^= 1;  // Toggle
-  Serial.println("BUTTON PRESSED");
+  Serial.println("ENABLE/DISABLE");
 }
+
+ISR(INT5_vect) {
+  RESET = 1;  // NO TOGGLE 
+  Serial.println("RESET");
+}
+
 
 // ========== TIMER FUNCTIONS ==========
 void setup_timer_regs() {
@@ -244,6 +342,90 @@ ISR(TIMER1_OVF_vect) {
   }
 }
 
+// ========= WATER SENSOR FUNCTIONS =========
+void adc_init() 
+{
+  *my_ADCSRA |= 0b10000000;
+  *my_ADCSRA &= 0b11011111;
+  *my_ADCSRA &= 0b11110111;
+  *my_ADCSRA &= 0b11111000;
+
+  *my_ADCSRB &= 0b111101111;
+  *my_ADCSRB &= 0b111110000;
+
+  *my_ADMUX &= 0b01111111;
+  *my_ADMUX |= 0b01000000;
+  *my_ADMUX &= 0b01111111;
+  *my_ADMUX &= 0b11011111;
+  *my_ADMUX &= 0b11100000;
+}
+unsigned int adc_read(unsigned char adc_channel_num) //work with channel 0
+{
+  *my_ADMUX &= 0b11100000;
+  *my_ADCSRB &= 0b11110111;//
+  *my_ADMUX |= 0b00000000;
+  *my_ADCSRA |= 0b01000000;
+  while((*my_ADCSRA & 0x40) != 0);
+  unsigned int val = *my_ADC_DATA;
+  return val;
+}
+//OUTPUTS TO CONSOL (DEBUGGING)
+void printWaterLevel(unsigned int level) {
+  char message[] = "Water Level: ";
+  char numBuffer[6];
+  int i = 0;
+  
+  // Print message
+  for(int j = 0; message[j] != '\0'; j++) {
+    putChar(message[j]);
+  }
+  
+  // Handle zero case
+  if (level == 0) {
+    putChar('0');
+  } else {
+    // Convert number to string (reversed)
+    while (level > 0) {
+      numBuffer[i++] = (level % 10) + '0';
+      level /= 10;
+    }
+    // Print in correct order (reverse)
+    for (int j = i - 1; j >= 0; j--) {
+      putChar(numBuffer[j]);
+    }
+  }
+  putChar('\n');
+}
+//WATER LEVEL ERROR CONDITIONS OUTPUT
+bool Error(unsigned int level){
+  int threshold = WATERTHRESHOLD;             
+  int waterlevel = adc_read(0);    
+  if (threshold < waterlevel){
+    return (0);
+  } else {
+    return (1);
+  }
+}
+// ========= TEMPERATURE SENSOR FUNCTIONS =========
+int getTemperature(){
+  int temp = dht.readTemperature(true);  
+  if (temp < -40 || temp > 180) return -1;  // Error
+  return (temp);
+}
+int getHumidity(){
+  int humid = dht.readHumidity();
+  if (humid < 0 || humid > 100) return -1;  // Error
+  return (humid);
+}
+bool Idle(unsigned int temp){
+  int threshold = TEMPTHRESHOLD;             
+  int temperature = temp;    
+  if (threshold > temperature){
+    return (1);
+  } else {
+    return (0);
+  }
+}
 
 
 // ========= UART FUNCTIONS =========
@@ -271,5 +453,20 @@ unsigned char getChar() {
 void putChar(unsigned char U0pdata) {
   while (!(*myUCSR0A & 1 << 5));
   *myUDR0 = U0pdata;
-  *myUDR0 = '\n';
 }
+
+
+/*
+Record the time and date every time the motor is turned on or of. This information
+should be transmitted to a host computer (over USB)
+
+The real-time clock module must be used for event reporting.
+– You may use the Arduino library for the clock
+
+Humidity and temperature should be continuously monitored and reported on the LDC
+screen. Updates should occur once per minute
+
+(IDLE)
+Exact time stamp (using real time clock) should record transition times
+
+*/
